@@ -77,6 +77,10 @@ class GitHub(private val token: String) {
         return c
     }
 
-    fun jobLog(repo: String, jobId: Long): String? =
+    /** Logs do job. Retorna null enquanto ainda não existem (job na fila / log não gerado): 404 é esperado. */
+    fun jobLog(repo: String, jobId: Long): String? = try {
         openDownload("/repos/$repo/actions/jobs/$jobId/logs")?.inputStream?.bufferedReader()?.use { it.readText() }
+    } catch (e: ApiException) {
+        if (e.code == 404 || e.code == 410) null else throw e
+    }
 }
