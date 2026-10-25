@@ -1,7 +1,6 @@
 package app.gitbuilder
 
 import android.app.*
-import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.*
@@ -82,7 +81,7 @@ class BuildService : Service() {
         val b = Notification.Builder(this, CH_RUN)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true).setOnlyAlertOnce(true)
-            .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+        if (Build.VERSION.SDK_INT >= 31) b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         if (s == null) return b.setContentTitle("GitBuilder").setContentText("Preparando…").build()
         val line = s.currentLine()
         val (doneCount, total) = s.progress()

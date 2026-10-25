@@ -40,12 +40,14 @@ class BuildSession private constructor(private val ctx: Context, val gh: GitHub,
             "Enviando seu projeto", "Preparando a compilação",
             "Compilando o app", "Finalizando o APK"
         )
-        private const val BUILD_STEP = "Build debug APK"
+        private const val BUILD_STEP = "Build release APK"
         private val ANSI = Regex("\u001B\\[[0-9;]*[A-Za-z]")
         private val TS_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
 
-        // Workflow injetado no repositório temporário: compila o projeto ENVIADO PELO USUÁRIO.
-        private const val WORKFLOW = """name: Build APK
+        // Workflow injetado no repositório temporário: compila em RELEASE o projeto ENVIADO PELO USUÁRIO e assina o APK
+        // com uma chave de teste criada na hora (instalável no celular; não serve para a Play Store).
+        // '§' vira '$' em tempo de execução, para não conflitar com templates do Kotlin.
+        private val WORKFLOW = """name: Build APK
 on: push
 jobs:
   build:
@@ -59,15 +61,25 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Build debug APK
+      - name: Build release APK
         run: |
-          if [ -f gradlew ]; then chmod +x gradlew; ./gradlew --no-daemon assembleDebug --stacktrace; else gradle --no-daemon assembleDebug --stacktrace; fi
+          if [ -f gradlew ]; then chmod +x gradlew; ./gradlew --no-daemon assembleRelease --stacktrace; else gradle --no-daemon assembleRelease --stacktrace; fi
+      - name: Sign APK
+        run: |
+          BT=§(ls -d "§ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          mkdir -p signed
+          keytool -genkeypair -keystore ks.p12 -storetype PKCS12 -alias k -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=GitBuilder"
+          find . -path '*/build/outputs/apk/release/*.apk' | while read f; do
+            "§BT/zipalign" -f -p 4 "§f" aligned.apk
+            "§BT/apksigner" sign --ks ks.p12 --ks-key-alias k --ks-pass pass:android --key-pass pass:android --out "signed/§(basename "§f" .apk)-signed.apk" aligned.apk
+          done
+          ls signed/*.apk
       - uses: actions/upload-artifact@v4
         with:
           name: apk
-          path: '**/build/outputs/apk/**/*.apk'
+          path: 'signed/*.apk'
           if-no-files-found: error
-"""
+""".replace('§', '$')
 
         fun create(ctx: Context, token: String, zipName: String, uri: Uri): BuildSession {
             val id = SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(Date())
@@ -339,7 +351,7 @@ jobs:
 
     private fun trackSafely(runId: Long) {
         try { track(runId) } catch (e: Exception) {
-            log("ERRO ao acompanhar: ${e.message}", 4)
+            log("ERRO ao acompanhar: ${e.message}", 1)
             finish("interrupted", "Acompanhamento interrompido: ${e.message}. A compilação pode ter continuado no GitHub.")
         }
     }

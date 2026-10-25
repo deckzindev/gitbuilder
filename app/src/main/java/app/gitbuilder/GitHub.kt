@@ -1,31 +1,8 @@
 package app.gitbuilder
 
-import android.content.Context
-import android.content.SharedPreferences
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-
-/** Token guardado criptografado (Android Keystore + AES-256). */
-object TokenStore {
-    private const val FILE = "secure_prefs"
-    private fun create(c: Context): SharedPreferences = EncryptedSharedPreferences.create(
-        c, FILE,
-        MasterKey.Builder(c).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-    )
-    // Se o Keystore estiver corrompido, recria o arquivo (o token antigo seria ilegível de qualquer forma).
-    private fun prefs(c: Context): SharedPreferences = try { create(c) } catch (e: Exception) { c.deleteSharedPreferences(FILE); create(c) }
-
-    fun get(c: Context): String? = try { prefs(c).getString("token", null) } catch (e: Exception) { null }
-    /** Grava de forma síncrona e confere lendo de volta. */
-    fun save(c: Context, t: String): Boolean = try { prefs(c).edit().putString("token", t).commit() && get(c) == t } catch (e: Exception) { false }
-    fun clear(c: Context) { try { prefs(c).edit().remove("token").commit() } catch (e: Exception) { } }
-    fun mask(t: String) = if (t.length > 10) t.take(4) + "…" + t.takeLast(4) else "••••"
-}
 
 class ApiException(val code: Int, msg: String) : Exception(msg)
 

@@ -6,7 +6,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -30,20 +29,9 @@ class BuildActivity : Activity() {
     private val listener: () -> Unit = { requestRender() }
     private lateinit var session: BuildSession
 
-    private val night by lazy { (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES }
     private val bg by lazy { getColor(R.color.app_bg) }
-    private val txt by lazy { if (night) Color.WHITE else 0xFF202124.toInt() }
-    private val muted by lazy { if (night) 0xFF9AA0A6.toInt() else 0xFF70757A.toInt() }
-    private val surface by lazy { if (night) 0xFF2A2B2E.toInt() else 0xFFE8EAED.toInt() }
     private val cardBg by lazy { if (night) 0xFF1E1F22.toInt() else Color.WHITE }
     private val cardLine by lazy { if (night) 0xFF3C4043.toInt() else 0xFFE0E0E0.toInt() }
-    private val blue = 0xFF1A73E8.toInt()
-    private val green by lazy { if (night) 0xFF81C995.toInt() else 0xFF1E8E3E.toInt() }
-    private val red by lazy { if (night) 0xFFF28B82.toInt() else 0xFFD93025.toInt() }
-    private val amber by lazy { if (night) 0xFFFDD663.toInt() else 0xFFE37400.toInt() }
-
-    private val stepNames = listOf("Enviando seu projeto", "Preparando a compilação", "Compilando o app", "Finalizando o APK")
-
     private lateinit var heroIcon: ImageView
     private lateinit var title: TextView
     private lateinit var subtitle: TextView
@@ -60,8 +48,6 @@ class BuildActivity : Activity() {
     private var detailsOpen = false
     private var lastDetails = ""
     private var downloading = false
-
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -84,12 +70,6 @@ class BuildActivity : Activity() {
     }
 
     // ---------- UI ----------
-    private fun styleBtn(b: Button, fill: Int, text: Int) {
-        b.background = GradientDrawable().apply { setColor(fill); cornerRadius = dp(14).toFloat() }
-        b.setTextColor(text); b.isAllCaps = false; b.stateListAnimator = null
-        b.minHeight = 0; b.minimumHeight = dp(52)
-    }
-
     private fun buildUi() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(bg); fitsSystemWindows = true }
 
@@ -112,7 +92,7 @@ class BuildActivity : Activity() {
             setPadding(dp(16), dp(8), dp(16), dp(8))
             background = GradientDrawable().apply { setColor(cardBg); setStroke(dp(1), cardLine); cornerRadius = dp(16).toFloat() }
         }
-        for (name in stepNames) {
+        for (name in BuildSession.STAGES) {
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(10), 0, dp(10)) }
             val box = FrameLayout(this)
             val icon = ImageView(this)
@@ -217,8 +197,9 @@ class BuildActivity : Activity() {
                 else -> { stepIcon[i].setImageResource(R.drawable.ic_step_pending); stepIcon[i].setColorFilter(muted); stepLabel[i].setTextColor(if (running) txt else muted) }
             }
         }
-        progress.max = snap.size.coerceAtLeast(1)
-        progress.progress = snap.count { it.second == "success" || it.second == "failure" || it.second == "skipped" }
+        val (finished, total) = session.progress()
+        progress.max = total.coerceAtLeast(1)
+        progress.progress = finished
 
         // Botões
         btnSecondary.visibility = View.GONE

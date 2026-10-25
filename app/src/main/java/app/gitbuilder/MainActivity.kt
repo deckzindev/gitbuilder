@@ -4,7 +4,6 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
-import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -40,17 +39,6 @@ class MainActivity : Activity() {
     private var tokenInvalid = false
     private val tokenHint = "Escopos necessários: repo e workflow"
     private var entryMsg = tokenHint
-
-    private val night get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-    private val txt get() = if (night) Color.WHITE else 0xFF202124.toInt()
-    private val muted get() = if (night) 0xFF9AA0A6.toInt() else 0xFF70757A.toInt()
-    private val surface get() = if (night) 0xFF2A2B2E.toInt() else 0xFFE8EAED.toInt()
-    private fun styleBtn(b: Button, fill: Int, text: Int) {
-        b.background = GradientDrawable().apply { setColor(fill); cornerRadius = dp(14).toFloat() }
-        b.setTextColor(text); b.isAllCaps = false; b.stateListAnimator = null
-        b.minHeight = 0; b.minimumHeight = dp(52)
-    }
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -102,8 +90,7 @@ class MainActivity : Activity() {
                 val session = BuildSession.create(applicationContext, t, zipName.ifEmpty { "projeto.zip" }, u)
                 Sessions.current = session
                 // A compilação roda no serviço em primeiro plano: continua com o app fechado.
-                startForegroundService(Intent(this@MainActivity, BuildService::class.java)
-                    .setData(u).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                startForegroundService(Intent(this@MainActivity, BuildService::class.java))
                 startActivity(Intent(this@MainActivity, BuildActivity::class.java).putExtra("history_id", session.id))
             }
         }
@@ -160,7 +147,7 @@ class MainActivity : Activity() {
         zipState.compoundDrawablePadding = dp(8)
         val ready = t != null && !tokenInvalid && zipUri != null
         btnBuild.isEnabled = ready
-        styleBtn(btnBuild, if (ready) 0xFF1A73E8.toInt() else surface, if (ready) Color.WHITE else muted)
+        styleBtn(btnBuild, if (ready) blue else surface, if (ready) Color.WHITE else muted)
     }
 
     /** Confere o token salvo SEM apagá-lo se a rede falhar. Só reabre o campo se o GitHub recusar o token. */
@@ -220,11 +207,8 @@ class MainActivity : Activity() {
     // ---------- Histórico ----------
     /** Ícone, cor e rótulo simples de cada compilação. */
     private fun status(m: JSONObject): Triple<Int, Int, String> {
-        val green = if (night) 0xFF81C995.toInt() else 0xFF1E8E3E.toInt()
-        val red = if (night) 0xFFF28B82.toInt() else 0xFFD93025.toInt()
-        val amber = if (night) 0xFFFDD663.toInt() else 0xFFE37400.toInt()
         return when (m.optString("result")) {
-            "running" -> if (m.getString("id") == Sessions.runningId()) Triple(R.drawable.ic_hourglass, 0xFF1A73E8.toInt(), "Compilando")
+            "running" -> if (m.getString("id") == Sessions.runningId()) Triple(R.drawable.ic_hourglass, blue, "Compilando")
                          else Triple(R.drawable.ic_warning, amber, "Interrompido")
             "success" -> Triple(R.drawable.ic_check_circle, green, "Pronto")
             "cancelled" -> Triple(R.drawable.ic_cancel_circle, muted, "Cancelado")
