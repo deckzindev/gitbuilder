@@ -41,24 +41,32 @@ class MainActivity : Activity() {
     private var entryMsg = tokenHint
 
     private val night get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+    private val txt get() = if (night) Color.WHITE else 0xFF202124.toInt()
+    private val muted get() = if (night) 0xFF9AA0A6.toInt() else 0xFF70757A.toInt()
+    private val surface get() = if (night) 0xFF2A2B2E.toInt() else 0xFFE8EAED.toInt()
+    private fun styleBtn(b: Button, fill: Int, text: Int) {
+        b.background = GradientDrawable().apply { setColor(fill); cornerRadius = dp(14).toFloat() }
+        b.setTextColor(text); b.isAllCaps = false; b.stateListAnimator = null
+        b.minHeight = 0; b.minimumHeight = dp(52)
+    }
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; fitsSystemWindows = true }
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; fitsSystemWindows = true; setBackgroundColor(getColor(R.color.app_bg)) }
 
         // Abas
-        val tabs = LinearLayout(this)
+        val tabs = LinearLayout(this).apply { setPadding(dp(12), dp(8), dp(12), dp(4)) }
         tabBuild = Button(this).apply { text = "Compilar"; setOnClickListener { showTab(false) } }
         tabHist = Button(this).apply { text = "Histórico"; setOnClickListener { showTab(true) } }
-        tabs.addView(tabBuild, LinearLayout.LayoutParams(0, -2, 1f))
-        tabs.addView(tabHist, LinearLayout.LayoutParams(0, -2, 1f))
+        tabs.addView(tabBuild, LinearLayout.LayoutParams(0, dp(44), 1f).apply { setMargins(dp(4), 0, dp(4), 0) })
+        tabs.addView(tabHist, LinearLayout.LayoutParams(0, dp(44), 1f).apply { setMargins(dp(4), 0, dp(4), 0) })
         root.addView(tabs, LinearLayout.LayoutParams(-1, -2))
 
         // Aba Compilar
-        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(24), dp(20), dp(24)) }
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(24), dp(24), dp(24), dp(48)) }
         fun add(parent: LinearLayout, v: View, top: Int = 10) = parent.addView(v, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(top) })
-        val gray = if (night) 0xFF9AA0A6.toInt() else 0xFF70757A.toInt()
+        val gray = muted
 
         // Token: só aparece enquanto não houver token válido salvo
         tokenEntry = LinearLayout(this).apply {
@@ -75,13 +83,13 @@ class MainActivity : Activity() {
             addView(tokenInput, LinearLayout.LayoutParams(-1, -2))
             entryState = TextView(this@MainActivity).apply { textSize = 12f; setTextColor(gray) }
             addView(entryState, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-            addView(Button(this@MainActivity).apply { text = "Validar e salvar"; setOnClickListener { saveToken() } },
+            addView(Button(this@MainActivity).apply { text = "Validar e salvar"; setOnClickListener { saveToken() } }.also { styleBtn(it, surface, txt) },
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
         }
         add(form, tokenEntry, 0)
 
         // Projeto
-        add(form, Button(this).apply { text = "Selecionar projeto (.zip)"; setOnClickListener { pickZip() } }, 16)
+        add(form, Button(this).apply { text = "Selecionar projeto (.zip)"; setOnClickListener { pickZip() } }.also { styleBtn(it, surface, txt) }, 16)
         zipState = TextView(this).apply { textSize = 14f; gravity = Gravity.CENTER; setTextColor(gray) }
         add(form, zipState, 8)
         btnBuild = Button(this).apply {
@@ -99,11 +107,11 @@ class MainActivity : Activity() {
             }
         }
         add(form, btnBuild, 8)
-        buildPane = ScrollView(this).apply { addView(form) }
+        buildPane = ScrollView(this).apply { isFillViewport = true; addView(form) }
 
         // Aba Histórico
         histList = ListView(this)
-        histEmpty = TextView(this).apply { text = "Nenhuma compilação ainda."; setPadding(dp(20), dp(20), dp(20), dp(20)) }
+        histEmpty = TextView(this).apply { text = "Nenhuma compilação ainda."; gravity = Gravity.CENTER; setTextColor(muted); setPadding(dp(20), dp(48), dp(20), dp(20)) }
         histList.setOnItemClickListener { _, _, pos, _ ->
             startActivity(Intent(this, BuildActivity::class.java).putExtra("history_id", items[pos].getString("id")))
         }
@@ -135,7 +143,9 @@ class MainActivity : Activity() {
     private fun showTab(hist: Boolean) {
         buildPane.visibility = if (hist) View.GONE else View.VISIBLE
         histPane.visibility = if (hist) View.VISIBLE else View.GONE
-        tabBuild.isEnabled = hist; tabHist.isEnabled = !hist
+        styleBtn(tabBuild, if (!hist) surface else Color.TRANSPARENT, if (!hist) txt else muted)
+        styleBtn(tabHist, if (hist) surface else Color.TRANSPARENT, if (hist) txt else muted)
+        tabBuild.minimumHeight = 0; tabHist.minimumHeight = 0
         if (hist) refreshHistory()
     }
 
@@ -144,7 +154,9 @@ class MainActivity : Activity() {
         tokenEntry.visibility = if (t == null || tokenInvalid) View.VISIBLE else View.GONE
         entryState.text = entryMsg
         zipState.text = if (zipUri != null) "📦 $zipName" else "Nenhum arquivo selecionado"
-        btnBuild.isEnabled = t != null && !tokenInvalid && zipUri != null
+        val ready = t != null && !tokenInvalid && zipUri != null
+        btnBuild.isEnabled = ready
+        styleBtn(btnBuild, if (ready) 0xFF1A73E8.toInt() else surface, if (ready) Color.WHITE else muted)
     }
 
     /** Confere o token salvo SEM apagá-lo se a rede falhar. Só reabre o campo se o GitHub recusar o token. */

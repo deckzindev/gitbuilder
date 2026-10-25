@@ -30,7 +30,7 @@ class BuildActivity : Activity() {
     private val shown = ArrayList<String>()
     private val listener: () -> Unit = { requestRender() }
     private val night by lazy { (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES }
-    private val bg by lazy { if (night) Color.BLACK else Color.WHITE }
+    private val bg by lazy { getColor(R.color.app_bg) }
     private val panel by lazy { if (night) 0xFF202124.toInt() else 0xFFF1F3F4.toInt() }
     private val header by lazy { if (night) 0xFF1B1B1F.toInt() else 0xFFF8F9FA.toInt() }
     private val strong by lazy { if (night) Color.WHITE else 0xFF202124.toInt() }
