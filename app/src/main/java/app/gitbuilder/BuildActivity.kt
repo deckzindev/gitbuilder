@@ -6,6 +6,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Intent
+import android.content.res.Configuration
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -28,6 +29,12 @@ class BuildActivity : Activity() {
     private val bodyViews = ArrayList<TextView>()
     private val shown = ArrayList<String>()
     private val listener: () -> Unit = { requestRender() }
+    private val night by lazy { (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES }
+    private val bg by lazy { if (night) Color.BLACK else Color.WHITE }
+    private val panel by lazy { if (night) 0xFF202124.toInt() else 0xFFF1F3F4.toInt() }
+    private val header by lazy { if (night) 0xFF1B1B1F.toInt() else 0xFFF8F9FA.toInt() }
+    private val strong by lazy { if (night) Color.WHITE else 0xFF202124.toInt() }
+    private val bodyText by lazy { if (night) 0xFFE0E0E0.toInt() else 0xFF3C4043.toInt() }
     private lateinit var session: BuildSession
     private lateinit var status: TextView
     private lateinit var progress: ProgressBar
@@ -61,16 +68,16 @@ class BuildActivity : Activity() {
 
     // ---------- UI ----------
     private fun buildUi() {
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.BLACK); fitsSystemWindows = true }
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(bg); fitsSystemWindows = true }
         status = TextView(this).apply {
-            setTextColor(Color.WHITE); textSize = 16f; setTypeface(null, Typeface.BOLD)
-            setPadding(32, 24, 32, 16); setBackgroundColor(0xFF202124.toInt()); text = "Iniciando…"
+            setTextColor(strong); textSize = 16f; setTypeface(null, Typeface.BOLD)
+            setPadding(32, 24, 32, 16); setBackgroundColor(panel); text = "Iniciando…"
         }
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
         container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         scroll = ScrollView(this).apply { addView(container) }
-        actions = LinearLayout(this).apply { visibility = View.GONE; setPadding(16, 16, 16, 16); setBackgroundColor(0xFF202124.toInt()) }
-        runBar = LinearLayout(this).apply { visibility = View.GONE; setPadding(16, 16, 16, 16); setBackgroundColor(0xFF202124.toInt()) }
+        actions = LinearLayout(this).apply { visibility = View.GONE; setPadding(16, 16, 16, 16); setBackgroundColor(panel) }
+        runBar = LinearLayout(this).apply { visibility = View.GONE; setPadding(16, 16, 16, 16); setBackgroundColor(panel) }
         runBar.addView(Button(this).apply { text = "Continuar em segundo plano"; setOnClickListener { goBackground() } }, LinearLayout.LayoutParams(-1, -2))
         btnResume = Button(this).apply { text = "Retomar acompanhamento"; visibility = View.GONE; setOnClickListener { resume() } }
         btnApk = Button(this).apply { text = "Baixar APK"; visibility = View.GONE; setOnClickListener { downloadApk() } }
@@ -86,19 +93,21 @@ class BuildActivity : Activity() {
         setContentView(root)
     }
 
-    private fun color(s: String) = when (s) {
+    private fun color(s: String) = if (night) when (s) {
         "running" -> 0xFFFFD54F.toInt(); "success" -> 0xFF81C995.toInt(); "failure" -> 0xFFF28B82.toInt(); else -> 0xFF9AA0A6.toInt()
+    } else when (s) {
+        "running" -> 0xFFB06000.toInt(); "success" -> 0xFF1E8E3E.toInt(); "failure" -> 0xFFD93025.toInt(); else -> 0xFF5F6368.toInt()
     }
     private fun icon(s: String) = when (s) { "running" -> "▶"; "success" -> "✔"; "failure" -> "✘"; "skipped" -> "—"; else -> "○" }
 
     private fun addStageViews(i: Int) {
         val h = TextView(this).apply {
             textSize = 14f; setTypeface(null, Typeface.BOLD); setPadding(32, 22, 32, 22)
-            setBackgroundColor(0xFF1B1B1F.toInt())
+            setBackgroundColor(header)
             setOnClickListener { expanded[i] = bodyViews[i].visibility != View.VISIBLE; render() }
         }
         val body = TextView(this).apply {
-            setTextColor(0xFFE0E0E0.toInt()); typeface = Typeface.MONOSPACE; textSize = 11f
+            setTextColor(bodyText); typeface = Typeface.MONOSPACE; textSize = 11f
             setPadding(24, 12, 24, 12); setTextIsSelectable(true); visibility = View.GONE
         }
         container.addView(h, LinearLayout.LayoutParams(-1, -2).apply { topMargin = 3 })

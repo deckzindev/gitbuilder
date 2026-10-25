@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -25,8 +26,6 @@ class MainActivity : Activity() {
     private var zipName = ""
     private var items: List<JSONObject> = emptyList()
     private lateinit var tokenInput: EditText
-    private lateinit var tokenState: TextView
-    private lateinit var tokenConnected: View
     private lateinit var tokenEntry: View
     private lateinit var entryState: TextView
     private lateinit var zipState: TextView
@@ -37,11 +36,11 @@ class MainActivity : Activity() {
     private lateinit var histPane: View
     private lateinit var histList: ListView
     private lateinit var histEmpty: TextView
-    private var loginInfo = ""
     private var tokenInvalid = false
     private val tokenHint = "Escopos necessários: repo e workflow"
     private var entryMsg = tokenHint
 
+    private val night get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     override fun onCreate(b: Bundle?) {
@@ -57,51 +56,34 @@ class MainActivity : Activity() {
         root.addView(tabs, LinearLayout.LayoutParams(-1, -2))
 
         // Aba Compilar
-        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(16), dp(20), dp(24)) }
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(24), dp(20), dp(24)) }
         fun add(parent: LinearLayout, v: View, top: Int = 10) = parent.addView(v, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(top) })
-        fun sectionLabel(t: String) = TextView(this).apply { text = t; textSize = 12f; setTypeface(null, Typeface.BOLD); setTextColor(0xFF70757A.toInt()) }
-        fun card() = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(16))
-            background = GradientDrawable().apply { setColor(Color.WHITE); setStroke(dp(1), 0xFFE0E0E0.toInt()); cornerRadius = dp(16).toFloat() }
-        }
+        val gray = if (night) 0xFF9AA0A6.toInt() else 0xFF70757A.toInt()
 
-        add(form, TextView(this).apply { text = "GitBuilder"; textSize = 26f; setTypeface(null, Typeface.BOLD) }, 0)
-
-        // Conta GitHub: com token salvo mostra só o status; sem token mostra o campo
-        add(form, sectionLabel("CONTA GITHUB"), 20)
-        val tokenCard = card()
-        tokenConnected = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            tokenState = TextView(this@MainActivity).apply { textSize = 15f }
-            addView(tokenState, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(Button(this@MainActivity).apply {
-                text = "Remover"; textSize = 12f; isAllCaps = false
-                setOnClickListener { TokenStore.clear(this@MainActivity); loginInfo = ""; tokenInvalid = false; entryMsg = tokenHint; refresh() }
-            }, LinearLayout.LayoutParams(-2, dp(40)))
-        }
+        // Token: só aparece enquanto não houver token válido salvo
         tokenEntry = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(16))
+            background = GradientDrawable().apply {
+                setColor(if (night) 0xFF1E1F22.toInt() else Color.WHITE)
+                setStroke(dp(1), if (night) 0xFF3C4043.toInt() else 0xFFE0E0E0.toInt()); cornerRadius = dp(16).toFloat()
+            }
             tokenInput = EditText(this@MainActivity).apply {
                 hint = "Colar token do GitHub"
                 inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             }
             addView(tokenInput, LinearLayout.LayoutParams(-1, -2))
-            entryState = TextView(this@MainActivity).apply { textSize = 12f; setTextColor(0xFF70757A.toInt()) }
+            entryState = TextView(this@MainActivity).apply { textSize = 12f; setTextColor(gray) }
             addView(entryState, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
             addView(Button(this@MainActivity).apply { text = "Validar e salvar"; setOnClickListener { saveToken() } },
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
         }
-        tokenCard.addView(tokenConnected, LinearLayout.LayoutParams(-1, -2))
-        tokenCard.addView(tokenEntry, LinearLayout.LayoutParams(-1, -2))
-        add(form, tokenCard, 6)
+        add(form, tokenEntry, 0)
 
         // Projeto
-        add(form, sectionLabel("PROJETO"), 20)
-        val projCard = card()
-        add(projCard, Button(this).apply { text = "Selecionar projeto (.zip)"; setOnClickListener { pickZip() } }, 0)
-        zipState = TextView(this).apply { textSize = 14f; gravity = Gravity.CENTER }
-        add(projCard, zipState, 8)
+        add(form, Button(this).apply { text = "Selecionar projeto (.zip)"; setOnClickListener { pickZip() } }, 16)
+        zipState = TextView(this).apply { textSize = 14f; gravity = Gravity.CENTER; setTextColor(gray) }
+        add(form, zipState, 8)
         btnBuild = Button(this).apply {
             text = "Compilar"
             setOnClickListener {
@@ -116,8 +98,7 @@ class MainActivity : Activity() {
                 startActivity(Intent(this@MainActivity, BuildActivity::class.java).putExtra("history_id", session.id))
             }
         }
-        add(projCard, btnBuild, 8)
-        add(form, projCard, 6)
+        add(form, btnBuild, 8)
         buildPane = ScrollView(this).apply { addView(form) }
 
         // Aba Histórico
@@ -160,25 +141,21 @@ class MainActivity : Activity() {
 
     private fun refresh() {
         val t = TokenStore.get(this)
-        val showEntry = t == null || tokenInvalid
-        tokenEntry.visibility = if (showEntry) View.VISIBLE else View.GONE
-        tokenConnected.visibility = if (showEntry) View.GONE else View.VISIBLE
+        tokenEntry.visibility = if (t == null || tokenInvalid) View.VISIBLE else View.GONE
         entryState.text = entryMsg
-        tokenState.text = if (loginInfo.isNotEmpty()) loginInfo else if (t != null) "Verificando conta…" else ""
         zipState.text = if (zipUri != null) "📦 $zipName" else "Nenhum arquivo selecionado"
         btnBuild.isEnabled = t != null && !tokenInvalid && zipUri != null
     }
 
-    /** Confere o token salvo SEM apagá-lo se a rede falhar. */
+    /** Confere o token salvo SEM apagá-lo se a rede falhar. Só reabre o campo se o GitHub recusar o token. */
     private fun checkLogin() {
         val t = TokenStore.get(this) ?: return
         Thread {
-            var invalid = false
-            val info = try { "✔ Conectado como ${GitHub(t).call("GET", "/user").getString("login")}" }
-            catch (e: ApiException) { if (e.code == 401) { invalid = true; "" } else "⚠ ${e.message}" }
-            catch (e: Exception) { "⚠ Sem conexão para verificar agora" }
+            val invalid = try { GitHub(t).call("GET", "/user"); false }
+            catch (e: ApiException) { e.code == 401 }
+            catch (e: Exception) { false }
             runOnUiThread {
-                tokenInvalid = invalid; loginInfo = info
+                tokenInvalid = invalid
                 if (invalid) entryMsg = "O GitHub recusou o token salvo. Cole um novo."
                 refresh()
             }
@@ -193,7 +170,7 @@ class MainActivity : Activity() {
             try {
                 GitHub(t).call("GET", "/user")
                 if (!TokenStore.save(this, t)) throw Exception("não foi possível gravar com segurança neste aparelho")
-                runOnUiThread { tokenInput.text.clear(); tokenInvalid = false; loginInfo = ""; entryMsg = tokenHint; toast("Token salvo. Não precisa informar de novo."); refresh(); checkLogin() }
+                runOnUiThread { tokenInput.text.clear(); tokenInvalid = false; entryMsg = tokenHint; toast("Token salvo. Não precisa informar de novo."); refresh(); checkLogin() }
             } catch (e: Exception) {
                 runOnUiThread { entryMsg = "Token não salvo: ${e.message}"; refresh() }
             }
