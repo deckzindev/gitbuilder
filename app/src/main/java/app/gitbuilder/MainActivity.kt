@@ -1,10 +1,13 @@
 package app.gitbuilder
 
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Typeface
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.text.InputType
@@ -70,8 +73,15 @@ class MainActivity : Activity() {
         btnBuild = Button(this).apply {
             text = "Compilar"
             setOnClickListener {
-                startActivity(Intent(this@MainActivity, BuildActivity::class.java)
-                    .setData(zipUri).putExtra("zip_name", zipName).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                val t = TokenStore.get(this@MainActivity); val u = zipUri
+                if (t == null || u == null) return@setOnClickListener
+                if (Sessions.runningId() != null) { toast("Já existe uma compilação em andamento. Veja no Histórico."); return@setOnClickListener }
+                val session = BuildSession.create(applicationContext, t, zipName.ifEmpty { "projeto.zip" }, u)
+                Sessions.current = session
+                // A compilação roda no serviço em primeiro plano: continua com o app fechado.
+                startForegroundService(Intent(this@MainActivity, BuildService::class.java)
+                    .setData(u).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                startActivity(Intent(this@MainActivity, BuildActivity::class.java).putExtra("history_id", session.id))
             }
         }
         add(btnBuild)
@@ -99,6 +109,8 @@ class MainActivity : Activity() {
         frame.addView(buildPane); frame.addView(histPane)
         root.addView(frame, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2)
         showTab(false)
         refresh()
         checkLogin()
@@ -157,7 +169,11 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(req: Int, res: Int, data: Intent?) {
         super.onActivityResult(req, res, data)
-        if (req == 1 && res == RESULT_OK && data?.data != null) { zipUri = data.data; zipName = nameOf(zipUri!!); refresh() }
+        if (req == 1 && res == RESULT_OK && data?.data != null) {
+            zipUri = data.data; zipName = nameOf(zipUri!!)
+            try { contentResolver.takePersistableUriPermission(zipUri!!, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (e: Exception) { }
+            refresh()
+        }
     }
 
     private fun nameOf(u: Uri): String = try {
@@ -169,9 +185,10 @@ class MainActivity : Activity() {
     // ---------- Histórico ----------
     private fun label(m: JSONObject): String {
         val tag = when (m.optString("result")) {
-            "running" -> if (m.getString("id") == BuildActivity.runningId) "⏳ Em andamento" else "⚠ Interrompido"
+            "running" -> if (m.getString("id") == Sessions.runningId()) "⏳ Em andamento" else "⚠ Interrompido"
             "success" -> "✔ Sucesso"
             "cancelled" -> "Cancelado"
+            "interrupted" -> "⚠ Acompanhamento interrompido"
             else -> "✘ Falhou"
         }
         val start = m.optLong("startedAt"); val fin = m.optLong("finishedAt")
