@@ -1,10 +1,12 @@
 package app.gitbuilder
 
+import android.Manifest
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.*
@@ -32,6 +34,7 @@ class BuildActivity : Activity() {
     private lateinit var scroll: ScrollView
     private lateinit var container: LinearLayout
     private lateinit var actions: LinearLayout
+    private lateinit var runBar: LinearLayout
     private lateinit var btnApk: Button
     private lateinit var btnResume: Button
 
@@ -67,6 +70,8 @@ class BuildActivity : Activity() {
         container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         scroll = ScrollView(this).apply { addView(container) }
         actions = LinearLayout(this).apply { visibility = View.GONE; setPadding(16, 16, 16, 16); setBackgroundColor(0xFF202124.toInt()) }
+        runBar = LinearLayout(this).apply { visibility = View.GONE; setPadding(16, 16, 16, 16); setBackgroundColor(0xFF202124.toInt()) }
+        runBar.addView(Button(this).apply { text = "Continuar em segundo plano"; setOnClickListener { goBackground() } }, LinearLayout.LayoutParams(-1, -2))
         btnResume = Button(this).apply { text = "Retomar acompanhamento"; visibility = View.GONE; setOnClickListener { resume() } }
         btnApk = Button(this).apply { text = "Baixar APK"; visibility = View.GONE; setOnClickListener { downloadApk() } }
         val btnCopy = Button(this).apply { text = "Copiar logs"; setOnClickListener { copyLogs() } }
@@ -76,6 +81,7 @@ class BuildActivity : Activity() {
         root.addView(status, LinearLayout.LayoutParams(-1, -2))
         root.addView(progress, LinearLayout.LayoutParams(-1, -2))
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(runBar, LinearLayout.LayoutParams(-1, -2))
         root.addView(actions, LinearLayout.LayoutParams(-1, -2))
         setContentView(root)
     }
@@ -125,6 +131,7 @@ class BuildActivity : Activity() {
         val fin = session.finalStatus
         status.text = fin ?: session.currentLine()
         actions.visibility = if (fin != null) View.VISIBLE else View.GONE
+        runBar.visibility = if (fin == null && session.running) View.VISIBLE else View.GONE
         btnApk.visibility = if (fin != null && session.artifactId > 0) View.VISIBLE else View.GONE
         val res = session.meta.optString("result")
         btnResume.visibility = if (fin != null && !session.running && session.meta.has("runId") && (res == "interrupted" || res == "running")) View.VISIBLE else View.GONE
@@ -138,6 +145,28 @@ class BuildActivity : Activity() {
             (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("logs", session.fullText()))
             toast("Logs copiados")
         } catch (e: Exception) { toast("Não foi possível copiar: ${e.message}") }
+    }
+
+    // ---------- Segundo plano ----------
+    private fun goBackground() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 3)
+            return
+        }
+        continueInBackground()
+    }
+
+    override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, res: IntArray) {
+        super.onRequestPermissionsResult(code, perms, res)
+        if (code == 3) continueInBackground()   // mesmo sem permissão a compilação segue; só a notificação fica oculta
+    }
+
+    private fun continueInBackground() {
+        if (Sessions.current === session && session.running) {
+            startForegroundService(Intent(this, BuildService::class.java))   // garante o serviço e a notificação
+            toast("Compilando em segundo plano. Acompanhe pela notificação.")
+            moveTaskToBack(true)
+        }
     }
 
     private fun resume() {

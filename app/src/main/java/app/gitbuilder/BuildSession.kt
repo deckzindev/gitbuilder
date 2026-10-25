@@ -14,7 +14,7 @@ import java.util.*
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.zip.ZipInputStream
 
-class Stage(var title: String, var state: String = "pending", var log: String = "")
+class Stage(var title: String, var state: String = "pending", var log: String = "", var ext: String = "")
 
 object Sessions {
     @Volatile var current: BuildSession? = null
@@ -36,10 +36,11 @@ class BuildSession private constructor(private val ctx: Context, val gh: GitHub,
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
 
     companion object {
-        val APP_STAGES = listOf(
-            "Validar token e ler o ZIP", "Criar repositório privado", "Enviar arquivos",
-            "Criar commit", "Aguardar o GitHub Actions"
+        val STAGES = listOf(
+            "Enviar projeto ao GitHub", "Preparar ambiente (runner, Java, Gradle)",
+            "Compilar APK", "Gerar e verificar APK"
         )
+        private const val BUILD_STEP = "Build debug APK"
         private val ANSI = Regex("\u001B\\[[0-9;]*[A-Za-z]")
         private val TS_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
 
@@ -74,7 +75,7 @@ jobs:
                 .put("startedAt", System.currentTimeMillis()).put("finishedAt", 0L)
                 .put("result", "running").put("summary", "Em andamento")
             val s = BuildSession(ctx.applicationContext, GitHub(token), meta)
-            APP_STAGES.forEach { s.stages.add(Stage(it)) }
+            STAGES.forEach { s.stages.add(Stage(it)) }
             s.zipUri = uri
             s.running = true
             s.persist()
@@ -103,7 +104,7 @@ jobs:
     private fun changed() { for (l in listeners) try { l() } catch (e: Exception) { } }
 
     // ---------- Leitura de estado ----------
-    fun snapshot(): List<Triple<String, String, String>> = synchronized(stages) { stages.map { Triple(it.title, it.state, it.log) } }
+    fun snapshot(): List<Triple<String, String, String>> = synchronized(stages) { stages.map { Triple(it.title, it.state, it.log + it.ext) } }
 
     private fun isDone(s: String) = s == "success" || s == "failure" || s == "skipped"
     fun progress(): Pair<Int, Int> { val s = snapshot(); return Pair(s.count { isDone(it.second) }, s.size) }
@@ -115,7 +116,7 @@ jobs:
     }
     fun fullText(): String = "GitBuilder — ${meta.optString("zipName")}\nRepositório: $fullName\n\n" +
         synchronized(stages) {
-            stages.withIndex().joinToString("\n") { (i, s) -> "===== [${i + 1}/${stages.size}] ${s.title} (${s.state}) =====\n${s.log}" }
+            stages.withIndex().joinToString("\n") { (i, s) -> "===== [${i + 1}/${stages.size}] ${s.title} (${s.state}) =====\n${s.log}${s.ext}" }
         }
 
     /** Prepara este objeto para continuar o acompanhamento de uma execução já iniciada no GitHub. */
@@ -125,7 +126,7 @@ jobs:
     private fun persist() {
         try {
             val arr = JSONArray()
-            synchronized(stages) { stages.forEach { arr.put(JSONObject().put("title", it.title).put("state", it.state).put("log", it.log)) } }
+            synchronized(stages) { stages.forEach { arr.put(JSONObject().put("title", it.title).put("state", it.state).put("log", it.log + it.ext)) } }
             meta.put("stages", arr.length()).put("repo", fullName).put("artifactId", artifactId)
             History.saveStages(ctx, id, arr)
             History.saveMeta(ctx, meta)
@@ -149,20 +150,40 @@ jobs:
         else -> "pending"
     }
 
+    private fun buildIndex(steps: JSONArray): Int {
+        for (i in 0 until steps.length()) if (steps.getJSONObject(i).optString("name") == BUILD_STEP) return i
+        return -1
+    }
+    // Passos antes do build → etapa 2 (índice 1); o build → etapa 3; o que vem depois → etapa 4.
+    private fun groupOf(i: Int, b: Int) = if (b < 0 || i < b) 1 else if (i == b) 2 else 3
+
+    private fun aggregate(l: List<String>): String = when {
+        l.isEmpty() -> "pending"
+        l.any { it == "failure" } -> "failure"
+        l.all { it == "skipped" } -> "skipped"
+        l.all { it == "success" || it == "skipped" } -> "success"
+        l.any { it != "pending" } -> "running"
+        else -> "pending"
+    }
+
     private fun syncSteps(steps: JSONArray) {
+        val b = buildIndex(steps)
+        val groups = Array(3) { ArrayList<String>() }
+        for (i in 0 until steps.length()) groups[groupOf(i, b) - 1].add(mapStep(steps.getJSONObject(i)))
         synchronized(stages) {
-            for (i in 0 until steps.length()) {
-                val s = steps.getJSONObject(i)
-                val idx = APP_STAGES.size + i
-                while (stages.size <= idx) stages.add(Stage(""))
-                stages[idx].title = s.optString("name"); stages[idx].state = mapStep(s)
+            for (g in 1..3) {
+                val st = aggregate(groups[g - 1])
+                if (!(g == 1 && st == "pending")) stages[g].state = st   // etapa 2 já está "rodando" (aguardando runner)
             }
+            // passos "post" rodam mesmo após falha: não contam como APK gerado
+            if (stages[1].state == "failure" || stages[2].state == "failure") stages[3].state = "skipped"
         }
         changed()
     }
 
     private fun applyLog(raw: String, steps: JSONArray) {
         val n = steps.length(); if (n == 0) return
+        val b = buildIndex(steps)
         val starts = Array(n) { i ->
             val s = steps.getJSONObject(i).optString("started_at", "")
             if (s.isEmpty() || s == "null") "" else try { OffsetDateTime.parse(s).withOffsetSameInstant(ZoneOffset.UTC).format(TS_FMT) } catch (e: Exception) { "" }
@@ -180,7 +201,13 @@ jobs:
             }
             bufs[cur].append(text).append('\n')
         }
-        synchronized(stages) { for (i in 0 until n) stages[APP_STAGES.size + i].log = bufs[i].toString() }
+        val groupText = Array(3) { StringBuilder() }
+        for (i in 0 until n) {
+            val t = bufs[i].toString()
+            if (t.isNotEmpty()) groupText[groupOf(i, b) - 1]
+                .append("── ").append(steps.getJSONObject(i).optString("name")).append(" ──\n").append(t)
+        }
+        synchronized(stages) { for (g in 1..3) stages[g].ext = groupText[g - 1].toString() }
         changed()
     }
 
@@ -198,6 +225,14 @@ jobs:
         .put("type", "blob").put("sha", sha)
 
     fun runResume() {
+        // Registro de versão anterior (mais etapas): reorganiza para o formato de 4 etapas
+        synchronized(stages) {
+            if (stages.size != STAGES.size) {
+                stages.clear(); STAGES.forEach { stages.add(Stage(it)) }
+                stages[0].state = "success"; stages[0].log = "(registro de versão anterior: etapas reorganizadas)\n"
+                stages[1].state = "running"
+            }
+        }
         val runId = meta.optLong("runId", -1)
         if (runId <= 0) { finish("interrupted", "Sem ID de execução para retomar"); return }
         trackSafely(runId)
@@ -206,7 +241,7 @@ jobs:
     fun runNew() {
         val local = File(File(ctx.filesDir, "zips").apply { mkdirs() }, "$id.zip")
         try {
-            // 1) Token + ZIP (copiado para o armazenamento do app: não depende mais da tela)
+            // Etapa 1: token, ZIP, repositório, upload, commit e criação da execução
             begin(0)
             val login = gh.call("GET", "/user").getString("login")
             log("Autenticado como $login")
@@ -224,10 +259,7 @@ jobs:
             if (files.none { it == "settings.gradle" || it == "settings.gradle.kts" })
                 throw Exception("O ZIP precisa conter um projeto Gradle (settings.gradle[.kts]) na raiz.")
             log("ZIP lido: ${files.size} arquivos" + if (prefix.isNotEmpty()) " (pasta raiz '$prefix' descartada)" else "")
-            end(0)
 
-            // 2) Repositório
-            begin(1)
             repoName = "apk-build-" + SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
             val repo = gh.call("POST", "/user/repos", JSONObject()
                 .put("name", repoName).put("private", true).put("auto_init", true)
@@ -235,10 +267,7 @@ jobs:
             fullName = repo.getString("full_name")
             val branch = repo.getString("default_branch")
             log("Repositório criado: $fullName (branch $branch)")
-            end(1)
 
-            // 3) Upload
-            begin(2)
             val tree = JSONArray()
             var n = 0
             local.inputStream().use { ins ->
@@ -253,7 +282,7 @@ jobs:
                                 .put("content", Base64.encodeToString(data, Base64.NO_WRAP))
                                 .put("encoding", "base64")).getString("sha")
                             tree.put(entry(p, sha)); n++
-                            retitle(2, "Enviar arquivos ($n/${files.size})")
+                            retitle(0, "${STAGES[0]} ($n/${files.size} arquivos)")
                             if (files.size <= 100 || n % 25 == 0 || n == files.size) log("✓ $p")
                         }
                     }
@@ -264,10 +293,7 @@ jobs:
                 .put("content", WORKFLOW).put("encoding", "utf-8")).getString("sha")
             tree.put(entry(".github/workflows/build.yml", wfSha))
             log("Workflow de build adicionado (.github/workflows/build.yml)")
-            end(2)
 
-            // 4) Commit
-            begin(3)
             var parent: String? = null
             for (i in 1..10) {
                 try {
@@ -277,15 +303,11 @@ jobs:
             }
             if (parent == null) throw Exception("Branch inicial do repositório não ficou disponível")
             val treeSha = gh.call("POST", "/repos/$fullName/git/trees", JSONObject().put("tree", tree)).getString("sha")
-            log("Árvore criada: ${treeSha.take(7)}")
             val commit = gh.call("POST", "/repos/$fullName/git/commits", JSONObject()
                 .put("message", "Projeto para build").put("tree", treeSha).put("parents", JSONArray().put(parent))).getString("sha")
             gh.call("PATCH", "/repos/$fullName/git/refs/heads/$branch", JSONObject().put("sha", commit).put("force", true))
             log("Commit enviado: ${commit.take(7)}")
-            end(3)
 
-            // 5) Aguardar Actions
-            begin(4)
             var run: JSONObject? = null
             for (i in 1..40) {
                 val runs = gh.call("GET", "/repos/$fullName/actions/runs?head_sha=$commit").getJSONArray("workflow_runs")
@@ -296,14 +318,18 @@ jobs:
             val runId = run.getLong("id")
             meta.put("runUrl", run.getString("html_url")).put("runId", runId)
             log("Execução iniciada: ${run.getString("html_url")}")
-            persist()
+            retitle(0, STAGES[0]); end(0)
+
+            // Etapas 2 a 4: acompanhamento no GitHub
+            begin(1)
+            log("Aguardando o runner do GitHub Actions…")
             trackSafely(runId)
         } catch (e: Exception) {
             synchronized(stages) {
                 val idx = stages.indexOfFirst { it.state == "running" }.let { if (it >= 0) it else curApp }
                 stages[idx].state = "failure"
                 stages[idx].log += "ERRO: ${e.message}\n"
-                for (i in 0 until APP_STAGES.size) if (stages[i].state == "pending") stages[i].state = "skipped"
+                for (st in stages) if (st.state == "pending") st.state = "skipped"
             }
             finish("failure", "Falha: ${e.message}")
         } finally {
@@ -321,23 +347,22 @@ jobs:
     /** Falta de rede NÃO é falha da compilação: só pausa o acompanhamento. */
     private fun track(runId: Long) {
         var conclusion = ""; var lastSt = ""; var lastPersist = 0L; var offlineSince = 0L
-        var jobSeen = synchronized(stages) { stages[4].state == "success" }
+        var jobSeen = meta.optBoolean("jobSeen", false)
         while (true) {
             try {
                 val r = gh.call("GET", "/repos/$fullName/actions/runs/$runId")
                 val st = r.getString("status")
-                if (offlineSince != 0L) { offlineSince = 0L; log("Conexão restabelecida", 4) }
-                if (st != lastSt) { lastSt = st; if (!jobSeen) log("Status da execução: $st", 4) }
+                if (offlineSince != 0L) { offlineSince = 0L; log("Conexão restabelecida", 1) }
+                if (st != lastSt) { lastSt = st; if (!jobSeen) log("Status da execução: $st", 1) }
                 val jobs = gh.call("GET", "/repos/$fullName/actions/runs/$runId/jobs").getJSONArray("jobs")
                 if (jobs.length() > 0) {
                     val job = jobs.getJSONObject(0)
                     val steps = job.optJSONArray("steps") ?: JSONArray()
                     if (steps.length() > 0 && job.optString("status") != "queued") {
                         if (!jobSeen) {
-                            jobSeen = true
-                            log("Runner iniciou o job '${job.optString("name")}'", 4)
-                            log("O status de cada etapa é atualizado ao vivo. Se o GitHub ainda não liberou o texto do log do job, ele aparece nas etapas quando o job terminar.", 4)
-                            setState(4, "success")
+                            jobSeen = true; meta.put("jobSeen", true)
+                            log("Runner iniciou o job '${job.optString("name")}'", 1)
+                            log("O status de cada etapa é atualizado ao vivo. Se o GitHub ainda não liberou o texto do log do job, ele aparece nas etapas quando o job terminar.", 1)
                         }
                         syncSteps(steps)
                         val raw = gh.jobLog(fullName, job.getLong("id"))
@@ -351,7 +376,7 @@ jobs:
                 val now = System.currentTimeMillis()
                 if (offlineSince == 0L) {
                     offlineSince = now
-                    log("Sem conexão com o GitHub (${e.message}). Continuo tentando por até 20 minutos; a compilação segue normalmente no GitHub.", 4)
+                    log("Sem conexão com o GitHub (${e.message}). Continuo tentando por até 20 minutos; a compilação segue normalmente no GitHub.", 1)
                 } else if (now - offlineSince > 20 * 60_000L) {
                     finish("interrupted", "Sem conexão há mais de 20 min. A compilação segue no GitHub: toque em Retomar acompanhamento.")
                     return
@@ -362,25 +387,31 @@ jobs:
             Thread.sleep(3000)
         }
         if (!jobSeen) {
-            setState(4, "failure")
-            log("A execução terminou sem iniciar o job (resultado: $conclusion)", 4)
+            setState(1, "failure")
+            log("A execução terminou sem iniciar o job (resultado: $conclusion)", 1)
         }
-
-        val artIdx = synchronized(stages) { stages.add(Stage("Verificar artefato do APK", "running")); stages.size - 1 }
+        synchronized(stages) {
+            for (st in stages) {
+                if (st.state == "pending") st.state = "skipped"
+                else if (st.state == "running") st.state = if (conclusion == "success") "success" else "failure"
+            }
+        }
         changed()
+
+        // Etapa 4: verificação do artefato
         try {
             val arts = gh.call("GET", "/repos/$fullName/actions/runs/$runId/artifacts").getJSONArray("artifacts")
             for (i in 0 until arts.length()) {
                 val a = arts.getJSONObject(i)
                 if (!a.optBoolean("expired") && a.optLong("size_in_bytes") > 0) artifactId = a.getLong("id")
             }
-            if (artifactId > 0) { log("Artefato 'apk' disponível para download", artIdx); setState(artIdx, "success") }
+            if (artifactId > 0) { log("Artefato 'apk' disponível para download", 3); setState(3, "success") }
             else {
                 log(if (conclusion == "success") "A compilação terminou, mas nenhum artefato válido foi encontrado."
-                    else "Sem artefato: a compilação não terminou com sucesso.", artIdx)
-                setState(artIdx, if (conclusion == "success") "failure" else "skipped")
+                    else "Sem artefato: a compilação não terminou com sucesso.", 3)
+                setState(3, if (conclusion == "success") "failure" else "skipped")
             }
-        } catch (e: Exception) { log("Não foi possível listar artefatos: ${e.message}", artIdx); setState(artIdx, "failure") }
+        } catch (e: Exception) { log("Não foi possível listar artefatos: ${e.message}", 3); setState(3, "failure") }
 
         val result = when (conclusion) { "success" -> "success"; "cancelled" -> "cancelled"; else -> "failure" }
         finish(result, when (result) {
