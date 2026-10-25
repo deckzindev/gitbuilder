@@ -283,7 +283,7 @@ jobs:
                                 .put("encoding", "base64")).getString("sha")
                             tree.put(entry(p, sha)); n++
                             retitle(0, "${STAGES[0]} ($n/${files.size} arquivos)")
-                            if (files.size <= 100 || n % 25 == 0 || n == files.size) log("✓ $p")
+                            if (files.size <= 100 || n % 25 == 0 || n == files.size) log("enviado: $p")
                         }
                     }
                     en = z.nextEntry

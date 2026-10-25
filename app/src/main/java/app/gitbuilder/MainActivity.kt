@@ -16,6 +16,7 @@ import android.os.Bundle
 import android.provider.OpenableColumns
 import android.text.InputType
 import android.view.View
+import android.view.ViewGroup
 import android.widget.*
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -153,7 +154,10 @@ class MainActivity : Activity() {
         val t = TokenStore.get(this)
         tokenEntry.visibility = if (t == null || tokenInvalid) View.VISIBLE else View.GONE
         entryState.text = entryMsg
-        zipState.text = if (zipUri != null) "📦 $zipName" else "Nenhum arquivo selecionado"
+        zipState.text = if (zipUri != null) zipName else "Nenhum arquivo selecionado"
+        val pkg = if (zipUri != null) getDrawable(R.drawable.ic_package)?.mutate()?.apply { setTint(muted); setBounds(0, 0, dp(20), dp(20)) } else null
+        zipState.setCompoundDrawablesRelative(pkg, null, null, null)
+        zipState.compoundDrawablePadding = dp(8)
         val ready = t != null && !tokenInvalid && zipUri != null
         btnBuild.isEnabled = ready
         styleBtn(btnBuild, if (ready) 0xFF1A73E8.toInt() else surface, if (ready) Color.WHITE else muted)
@@ -214,23 +218,39 @@ class MainActivity : Activity() {
     } catch (e: Exception) { "arquivo" }
 
     // ---------- Histórico ----------
-    private fun label(m: JSONObject): String {
-        val tag = when (m.optString("result")) {
-            "running" -> if (m.getString("id") == Sessions.runningId()) "⏳ Compilando" else "⚠ Interrompido"
-            "success" -> "✔ Pronto"
-            "cancelled" -> "Cancelado"
-            "interrupted" -> "⚠ Interrompido"
-            else -> "✘ Não compilou"
+    /** Ícone, cor e rótulo simples de cada compilação. */
+    private fun status(m: JSONObject): Triple<Int, Int, String> {
+        val green = if (night) 0xFF81C995.toInt() else 0xFF1E8E3E.toInt()
+        val red = if (night) 0xFFF28B82.toInt() else 0xFFD93025.toInt()
+        val amber = if (night) 0xFFFDD663.toInt() else 0xFFE37400.toInt()
+        return when (m.optString("result")) {
+            "running" -> if (m.getString("id") == Sessions.runningId()) Triple(R.drawable.ic_hourglass, 0xFF1A73E8.toInt(), "Compilando")
+                         else Triple(R.drawable.ic_warning, amber, "Interrompido")
+            "success" -> Triple(R.drawable.ic_check_circle, green, "Pronto")
+            "cancelled" -> Triple(R.drawable.ic_cancel_circle, muted, "Cancelado")
+            "interrupted" -> Triple(R.drawable.ic_warning, amber, "Interrompido")
+            else -> Triple(R.drawable.ic_error_circle, red, "Não compilou")
         }
-        val start = m.optLong("startedAt"); val fin = m.optLong("finishedAt")
-        val date = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(start))
-        val dur = if (fin > 0) { val s = (fin - start) / 1000; " · ${s / 60}m%02ds".format(s % 60) } else ""
-        return "$tag — $date\n${m.optString("zipName")}$dur"
     }
 
     private fun refreshHistory() {
         items = History.list(this)
-        histList.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, items.map { label(it) })
+        histList.adapter = object : ArrayAdapter<JSONObject>(this, 0, items) {
+            override fun getView(pos: Int, v: View?, parent: ViewGroup): View {
+                val m = getItem(pos)!!
+                val (icon, color, tag) = status(m)
+                val start = m.optLong("startedAt"); val fin = m.optLong("finishedAt")
+                val date = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(start))
+                val dur = if (fin > 0) { val s = (fin - start) / 1000; " · ${s / 60}m%02ds".format(s % 60) } else ""
+                val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(20), dp(14), dp(20), dp(14)) }
+                row.addView(ImageView(this@MainActivity).apply { setImageResource(icon); setColorFilter(color) }, LinearLayout.LayoutParams(dp(26), dp(26)))
+                val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
+                col.addView(TextView(this@MainActivity).apply { text = "$tag — $date"; textSize = 15f; setTypeface(null, Typeface.BOLD); setTextColor(txt) })
+                col.addView(TextView(this@MainActivity).apply { text = m.optString("zipName") + dur; textSize = 13f; setTextColor(muted) })
+                row.addView(col, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(16) })
+                return row
+            }
+        }
         histEmpty.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
     }
 

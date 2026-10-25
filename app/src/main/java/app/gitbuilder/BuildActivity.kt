@@ -40,10 +40,11 @@ class BuildActivity : Activity() {
     private val blue = 0xFF1A73E8.toInt()
     private val green by lazy { if (night) 0xFF81C995.toInt() else 0xFF1E8E3E.toInt() }
     private val red by lazy { if (night) 0xFFF28B82.toInt() else 0xFFD93025.toInt() }
+    private val amber by lazy { if (night) 0xFFFDD663.toInt() else 0xFFE37400.toInt() }
 
     private val stepNames = listOf("Enviando seu projeto", "Preparando a compilação", "Compilando o app", "Finalizando o APK")
 
-    private lateinit var emoji: TextView
+    private lateinit var heroIcon: ImageView
     private lateinit var title: TextView
     private lateinit var subtitle: TextView
     private lateinit var progress: ProgressBar
@@ -52,7 +53,7 @@ class BuildActivity : Activity() {
     private lateinit var detailsCopy: TextView
     private lateinit var btnPrimary: Button
     private lateinit var btnSecondary: Button
-    private val stepIcon = ArrayList<TextView>()
+    private val stepIcon = ArrayList<ImageView>()
     private val stepSpin = ArrayList<ProgressBar>()
     private val stepLabel = ArrayList<TextView>()
     private var primaryAction: () -> Unit = {}
@@ -96,11 +97,11 @@ class BuildActivity : Activity() {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
             setPadding(dp(24), dp(32), dp(24), dp(16))
         }
-        emoji = TextView(this).apply { textSize = 56f; gravity = Gravity.CENTER }
+        heroIcon = ImageView(this)
         title = TextView(this).apply { textSize = 22f; setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; setTextColor(txt) }
         subtitle = TextView(this).apply { textSize = 14f; gravity = Gravity.CENTER; setTextColor(muted) }
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
-        content.addView(emoji, LinearLayout.LayoutParams(-1, -2))
+        content.addView(heroIcon, LinearLayout.LayoutParams(dp(72), dp(72)))
         content.addView(title, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
         content.addView(subtitle, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
         content.addView(progress, LinearLayout.LayoutParams(-1, dp(8)).apply { topMargin = dp(24) })
@@ -114,9 +115,9 @@ class BuildActivity : Activity() {
         for (name in stepNames) {
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(10), 0, dp(10)) }
             val box = FrameLayout(this)
-            val icon = TextView(this).apply { textSize = 18f; gravity = Gravity.CENTER; setTypeface(null, Typeface.BOLD) }
+            val icon = ImageView(this)
             val spin = ProgressBar(this).apply { visibility = View.GONE }
-            box.addView(icon, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
+            box.addView(icon, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER))
             box.addView(spin, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
             val label = TextView(this).apply { text = name; textSize = 16f; setTextColor(txt) }
             row.addView(box, LinearLayout.LayoutParams(dp(28), dp(28)))
@@ -179,16 +180,16 @@ class BuildActivity : Activity() {
             else -> "fail"
         }
 
-        val e: String; val t: String; val sub: String
+        val e: Int; val t: String; val sub: String
         when (kind) {
-            "run" -> { e = "⏳"; t = "Compilando seu app…"; sub = "Pode levar alguns minutos. Você pode fechar o app, avisaremos quando terminar." }
-            "ok" -> { e = "✅"; t = "Seu app está pronto!"; sub = "Toque em Instalar aplicativo para colocá-lo no seu celular." }
-            "noapk" -> { e = "⚠️"; t = "Compilado, mas sem arquivo"; sub = "Não encontramos o APK gerado. Tente novamente." }
-            "cancelled" -> { e = "🚫"; t = "Compilação cancelada"; sub = "" }
-            "pause" -> { e = "📡"; t = "Perdemos o acompanhamento"; sub = "Seu app pode ter continuado a compilar. Toque em Continuar acompanhando." }
-            "stopped" -> { e = "⚠️"; t = "Compilação interrompida"; sub = "O app foi fechado antes de terminar. Selecione o projeto e tente novamente." }
+            "run" -> { e = R.drawable.ic_hourglass; t = "Compilando seu app…"; sub = "Pode levar alguns minutos. Você pode fechar o app, avisaremos quando terminar." }
+            "ok" -> { e = R.drawable.ic_check_circle; t = "Seu app está pronto!"; sub = "Toque em Instalar aplicativo para colocá-lo no seu celular." }
+            "noapk" -> { e = R.drawable.ic_warning; t = "Compilado, mas sem arquivo"; sub = "Não encontramos o APK gerado. Tente novamente." }
+            "cancelled" -> { e = R.drawable.ic_cancel_circle; t = "Compilação cancelada"; sub = "" }
+            "pause" -> { e = R.drawable.ic_offline; t = "Perdemos o acompanhamento"; sub = "Seu app pode ter continuado a compilar. Toque em Continuar acompanhando." }
+            "stopped" -> { e = R.drawable.ic_warning; t = "Compilação interrompida"; sub = "O app foi fechado antes de terminar. Selecione o projeto e tente novamente." }
             else -> {
-                e = "❌"; t = "Não foi possível compilar"
+                e = R.drawable.ic_error_circle; t = "Não foi possível compilar"
                 sub = when (failedIdx) {
                     0 -> "Não conseguimos enviar o projeto. Confira sua internet e seu token."
                     1 -> "Não conseguimos preparar a compilação. Tente novamente em instantes."
@@ -198,7 +199,9 @@ class BuildActivity : Activity() {
                 }
             }
         }
-        emoji.text = e; title.text = t; subtitle.text = sub
+        heroIcon.setImageResource(e)
+        heroIcon.setColorFilter(when (kind) { "run" -> blue; "ok" -> green; "cancelled" -> muted; "fail" -> red; else -> amber })
+        title.text = t; subtitle.text = sub
         subtitle.visibility = if (sub.isEmpty()) View.GONE else View.VISIBLE
 
         // Etapas
@@ -208,10 +211,10 @@ class BuildActivity : Activity() {
             stepSpin[i].visibility = if (running) View.VISIBLE else View.GONE
             stepIcon[i].visibility = if (running) View.GONE else View.VISIBLE
             when (st) {
-                "success" -> { stepIcon[i].text = "✓"; stepIcon[i].setTextColor(green); stepLabel[i].setTextColor(txt) }
-                "failure" -> { stepIcon[i].text = "✕"; stepIcon[i].setTextColor(red); stepLabel[i].setTextColor(txt) }
-                "skipped" -> { stepIcon[i].text = "–"; stepIcon[i].setTextColor(muted); stepLabel[i].setTextColor(muted) }
-                else -> { stepIcon[i].text = "○"; stepIcon[i].setTextColor(muted); stepLabel[i].setTextColor(if (running) txt else muted) }
+                "success" -> { stepIcon[i].setImageResource(R.drawable.ic_step_done); stepIcon[i].setColorFilter(green); stepLabel[i].setTextColor(txt) }
+                "failure" -> { stepIcon[i].setImageResource(R.drawable.ic_step_fail); stepIcon[i].setColorFilter(red); stepLabel[i].setTextColor(txt) }
+                "skipped" -> { stepIcon[i].setImageResource(R.drawable.ic_step_skip); stepIcon[i].setColorFilter(muted); stepLabel[i].setTextColor(muted) }
+                else -> { stepIcon[i].setImageResource(R.drawable.ic_step_pending); stepIcon[i].setColorFilter(muted); stepLabel[i].setTextColor(if (running) txt else muted) }
             }
         }
         progress.max = snap.size.coerceAtLeast(1)
