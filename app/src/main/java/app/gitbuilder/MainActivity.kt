@@ -216,16 +216,16 @@ class MainActivity : Activity() {
     // ---------- Histórico ----------
     private fun label(m: JSONObject): String {
         val tag = when (m.optString("result")) {
-            "running" -> if (m.getString("id") == Sessions.runningId()) "⏳ Em andamento" else "⚠ Interrompido"
-            "success" -> "✔ Sucesso"
+            "running" -> if (m.getString("id") == Sessions.runningId()) "⏳ Compilando" else "⚠ Interrompido"
+            "success" -> "✔ Pronto"
             "cancelled" -> "Cancelado"
-            "interrupted" -> "⚠ Acompanhamento interrompido"
-            else -> "✘ Falhou"
+            "interrupted" -> "⚠ Interrompido"
+            else -> "✘ Não compilou"
         }
         val start = m.optLong("startedAt"); val fin = m.optLong("finishedAt")
         val date = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(start))
         val dur = if (fin > 0) { val s = (fin - start) / 1000; " · ${s / 60}m%02ds".format(s % 60) } else ""
-        return "$tag — $date\n${m.optString("zipName")} · ${m.optInt("stages")} etapas$dur"
+        return "$tag — $date\n${m.optString("zipName")}$dur"
     }
 
     private fun refreshHistory() {

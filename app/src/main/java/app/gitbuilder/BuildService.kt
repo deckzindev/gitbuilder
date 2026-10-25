@@ -62,8 +62,8 @@ class BuildService : Service() {
         try { if (wake?.isHeld == true) wake?.release() } catch (e: Exception) { }
         stopForeground(STOP_FOREGROUND_REMOVE)
         val ok = s.meta.optString("result") == "success"
-        val title = s.finalStatus ?: "Compilação finalizada"
-        val text = s.meta.optString("zipName") + if (ok && s.artifactId > 0) " — toque para baixar o APK" else " — toque para ver os logs"
+        val title = if (ok) "Seu app está pronto!" else "Não foi possível compilar"
+        val text = s.meta.optString("zipName") + if (ok && s.artifactId > 0) " — toque para instalar" else " — toque para ver o que aconteceu"
         val n = Notification.Builder(this, CH_DONE)
             .setSmallIcon(if (ok) android.R.drawable.stat_sys_download_done else android.R.drawable.stat_notify_error)
             .setContentTitle(title).setContentText(text)
@@ -87,8 +87,8 @@ class BuildService : Service() {
         val line = s.currentLine()
         val (doneCount, total) = s.progress()
         return b.setWhen(s.meta.optLong("startedAt")).setUsesChronometer(true).setShowWhen(true)
-            .setSubText("$doneCount/$total etapas")
-            .setContentTitle("Compilando ${s.meta.optString("zipName")}")
+            .setSubText("$doneCount de $total")
+            .setContentTitle("Compilando seu app")
             .setContentText(line).setStyle(Notification.BigTextStyle().bigText(line))
             .setProgress(total, doneCount, false)
             .setContentIntent(openIntent(s.id)).build()

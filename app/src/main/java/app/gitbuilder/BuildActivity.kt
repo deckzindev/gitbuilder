@@ -4,14 +4,17 @@ import android.Manifest
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.ContentValues
 import android.content.Intent
-import android.content.res.Configuration
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.*
-import android.provider.MediaStore
+import android.provider.Settings
+import androidx.core.content.FileProvider
+import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.*
@@ -19,31 +22,45 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipInputStream
 
-/** Apenas exibe uma BuildSession (ao vivo ou do histórico). Fechar esta tela NÃO interrompe a compilação. */
+/** Tela única e simples de compilação. Apenas exibe uma BuildSession; fechar esta tela NÃO interrompe a compilação. */
 class BuildActivity : Activity() {
 
     private val ui = Handler(Looper.getMainLooper())
     private val renderQueued = AtomicBoolean(false)
-    private val expanded = HashMap<Int, Boolean>()
-    private val headerViews = ArrayList<TextView>()
-    private val bodyViews = ArrayList<TextView>()
-    private val shown = ArrayList<String>()
     private val listener: () -> Unit = { requestRender() }
+    private lateinit var session: BuildSession
+
     private val night by lazy { (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES }
     private val bg by lazy { getColor(R.color.app_bg) }
-    private val panel by lazy { if (night) 0xFF202124.toInt() else 0xFFF1F3F4.toInt() }
-    private val header by lazy { if (night) 0xFF1B1B1F.toInt() else 0xFFF8F9FA.toInt() }
-    private val strong by lazy { if (night) Color.WHITE else 0xFF202124.toInt() }
-    private val bodyText by lazy { if (night) 0xFFE0E0E0.toInt() else 0xFF3C4043.toInt() }
-    private lateinit var session: BuildSession
-    private lateinit var status: TextView
+    private val txt by lazy { if (night) Color.WHITE else 0xFF202124.toInt() }
+    private val muted by lazy { if (night) 0xFF9AA0A6.toInt() else 0xFF70757A.toInt() }
+    private val surface by lazy { if (night) 0xFF2A2B2E.toInt() else 0xFFE8EAED.toInt() }
+    private val cardBg by lazy { if (night) 0xFF1E1F22.toInt() else Color.WHITE }
+    private val cardLine by lazy { if (night) 0xFF3C4043.toInt() else 0xFFE0E0E0.toInt() }
+    private val blue = 0xFF1A73E8.toInt()
+    private val green by lazy { if (night) 0xFF81C995.toInt() else 0xFF1E8E3E.toInt() }
+    private val red by lazy { if (night) 0xFFF28B82.toInt() else 0xFFD93025.toInt() }
+
+    private val stepNames = listOf("Enviando seu projeto", "Preparando a compilação", "Compilando o app", "Finalizando o APK")
+
+    private lateinit var emoji: TextView
+    private lateinit var title: TextView
+    private lateinit var subtitle: TextView
     private lateinit var progress: ProgressBar
-    private lateinit var scroll: ScrollView
-    private lateinit var container: LinearLayout
-    private lateinit var actions: LinearLayout
-    private lateinit var runBar: LinearLayout
-    private lateinit var btnApk: Button
-    private lateinit var btnResume: Button
+    private lateinit var detailsToggle: TextView
+    private lateinit var detailsText: TextView
+    private lateinit var detailsCopy: TextView
+    private lateinit var btnPrimary: Button
+    private lateinit var btnSecondary: Button
+    private val stepIcon = ArrayList<TextView>()
+    private val stepSpin = ArrayList<ProgressBar>()
+    private val stepLabel = ArrayList<TextView>()
+    private var primaryAction: () -> Unit = {}
+    private var detailsOpen = false
+    private var lastDetails = ""
+    private var downloading = false
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -61,98 +78,182 @@ class BuildActivity : Activity() {
     private fun attach(s: BuildSession) {
         if (::session.isInitialized) session.removeListener(listener)
         session = s
-        expanded.clear()
         s.addListener(listener)
         render()
     }
 
     // ---------- UI ----------
+    private fun styleBtn(b: Button, fill: Int, text: Int) {
+        b.background = GradientDrawable().apply { setColor(fill); cornerRadius = dp(14).toFloat() }
+        b.setTextColor(text); b.isAllCaps = false; b.stateListAnimator = null
+        b.minHeight = 0; b.minimumHeight = dp(52)
+    }
+
     private fun buildUi() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(bg); fitsSystemWindows = true }
-        status = TextView(this).apply {
-            setTextColor(strong); textSize = 16f; setTypeface(null, Typeface.BOLD)
-            setPadding(32, 24, 32, 16); setBackgroundColor(panel); text = "Iniciando…"
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(24), dp(32), dp(24), dp(16))
         }
+        emoji = TextView(this).apply { textSize = 56f; gravity = Gravity.CENTER }
+        title = TextView(this).apply { textSize = 22f; setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; setTextColor(txt) }
+        subtitle = TextView(this).apply { textSize = 14f; gravity = Gravity.CENTER; setTextColor(muted) }
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
-        container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        scroll = ScrollView(this).apply { addView(container) }
-        actions = LinearLayout(this).apply { visibility = View.GONE; setPadding(16, 16, 16, 16); setBackgroundColor(panel) }
-        runBar = LinearLayout(this).apply { visibility = View.GONE; setPadding(16, 16, 16, 16); setBackgroundColor(panel) }
-        runBar.addView(Button(this).apply { text = "Continuar em segundo plano"; setOnClickListener { goBackground() } }, LinearLayout.LayoutParams(-1, -2))
-        btnResume = Button(this).apply { text = "Retomar acompanhamento"; visibility = View.GONE; setOnClickListener { resume() } }
-        btnApk = Button(this).apply { text = "Baixar APK"; visibility = View.GONE; setOnClickListener { downloadApk() } }
-        val btnCopy = Button(this).apply { text = "Copiar logs"; setOnClickListener { copyLogs() } }
-        actions.addView(btnResume, LinearLayout.LayoutParams(0, -2, 1f))
-        actions.addView(btnApk, LinearLayout.LayoutParams(0, -2, 1f))
-        actions.addView(btnCopy, LinearLayout.LayoutParams(0, -2, 1f))
-        root.addView(status, LinearLayout.LayoutParams(-1, -2))
-        root.addView(progress, LinearLayout.LayoutParams(-1, -2))
+        content.addView(emoji, LinearLayout.LayoutParams(-1, -2))
+        content.addView(title, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        content.addView(subtitle, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        content.addView(progress, LinearLayout.LayoutParams(-1, dp(8)).apply { topMargin = dp(24) })
+
+        // Lista de etapas em linguagem simples
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            background = GradientDrawable().apply { setColor(cardBg); setStroke(dp(1), cardLine); cornerRadius = dp(16).toFloat() }
+        }
+        for (name in stepNames) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(10), 0, dp(10)) }
+            val box = FrameLayout(this)
+            val icon = TextView(this).apply { textSize = 18f; gravity = Gravity.CENTER; setTypeface(null, Typeface.BOLD) }
+            val spin = ProgressBar(this).apply { visibility = View.GONE }
+            box.addView(icon, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
+            box.addView(spin, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
+            val label = TextView(this).apply { text = name; textSize = 16f; setTextColor(txt) }
+            row.addView(box, LinearLayout.LayoutParams(dp(28), dp(28)))
+            row.addView(label, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(12) })
+            card.addView(row, LinearLayout.LayoutParams(-1, -2))
+            stepIcon.add(icon); stepSpin.add(spin); stepLabel.add(label)
+        }
+        content.addView(card, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) })
+
+        // Detalhes técnicos: escondidos por padrão
+        detailsToggle = TextView(this).apply {
+            text = "Ver detalhes técnicos"; textSize = 13f; gravity = Gravity.CENTER; setTextColor(muted)
+            setPadding(dp(12), dp(20), dp(12), dp(12))
+            setOnClickListener { detailsOpen = !detailsOpen; render() }
+        }
+        detailsText = TextView(this).apply {
+            typeface = Typeface.MONOSPACE; textSize = 11f; setTextColor(txt); setTextIsSelectable(true)
+            setPadding(dp(12), dp(12), dp(12), dp(12)); visibility = View.GONE
+            background = GradientDrawable().apply { setColor(surface); cornerRadius = dp(12).toFloat() }
+        }
+        detailsCopy = TextView(this).apply {
+            text = "Copiar detalhes"; textSize = 13f; gravity = Gravity.CENTER; setTextColor(blue)
+            setPadding(dp(12), dp(12), dp(12), dp(12)); visibility = View.GONE
+            setOnClickListener { copyLogs() }
+        }
+        content.addView(detailsToggle, LinearLayout.LayoutParams(-1, -2))
+        content.addView(detailsText, LinearLayout.LayoutParams(-1, -2))
+        content.addView(detailsCopy, LinearLayout.LayoutParams(-1, -2))
+
+        val scroll = ScrollView(this).apply { isFillViewport = true; addView(content) }
+
+        // Botões fixos embaixo
+        val bar = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(8), dp(24), dp(20)) }
+        btnPrimary = Button(this).apply { setOnClickListener { primaryAction() } }
+        btnSecondary = Button(this).apply { setOnClickListener { finish() } }
+        bar.addView(btnPrimary, LinearLayout.LayoutParams(-1, -2))
+        bar.addView(btnSecondary, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        root.addView(runBar, LinearLayout.LayoutParams(-1, -2))
-        root.addView(actions, LinearLayout.LayoutParams(-1, -2))
+        root.addView(bar, LinearLayout.LayoutParams(-1, -2))
         setContentView(root)
-    }
-
-    private fun color(s: String) = if (night) when (s) {
-        "running" -> 0xFFFFD54F.toInt(); "success" -> 0xFF81C995.toInt(); "failure" -> 0xFFF28B82.toInt(); else -> 0xFF9AA0A6.toInt()
-    } else when (s) {
-        "running" -> 0xFFB06000.toInt(); "success" -> 0xFF1E8E3E.toInt(); "failure" -> 0xFFD93025.toInt(); else -> 0xFF5F6368.toInt()
-    }
-    private fun icon(s: String) = when (s) { "running" -> "▶"; "success" -> "✔"; "failure" -> "✘"; "skipped" -> "—"; else -> "○" }
-
-    private fun addStageViews(i: Int) {
-        val h = TextView(this).apply {
-            textSize = 14f; setTypeface(null, Typeface.BOLD); setPadding(32, 22, 32, 22)
-            setBackgroundColor(header)
-            setOnClickListener { expanded[i] = bodyViews[i].visibility != View.VISIBLE; render() }
-        }
-        val body = TextView(this).apply {
-            setTextColor(bodyText); typeface = Typeface.MONOSPACE; textSize = 11f
-            setPadding(24, 12, 24, 12); setTextIsSelectable(true); visibility = View.GONE
-        }
-        container.addView(h, LinearLayout.LayoutParams(-1, -2).apply { topMargin = 3 })
-        container.addView(body, LinearLayout.LayoutParams(-1, -2))
-        headerViews.add(h); bodyViews.add(body); shown.add("")
     }
 
     private fun requestRender() { if (renderQueued.compareAndSet(false, true)) ui.post { renderQueued.set(false); render() } }
 
     private fun render() {
         val snap = session.snapshot()
-        val total = snap.size
-        val child = scroll.getChildAt(0)
-        val atBottom = child.bottom - (scroll.height + scroll.scrollY) < 200
-        while (headerViews.size < total) addStageViews(headerViews.size)
-        for ((i, s) in snap.withIndex()) {
-            val h = headerViews[i]
-            val ht = "${icon(s.second)}  [${i + 1}/$total] ${s.first}"
-            if (h.text.toString() != ht) h.text = ht
-            h.setTextColor(color(s.second))
-            val open = expanded[i] ?: (s.second == "running" || s.second == "failure")
-            val b = bodyViews[i]
-            if (open && s.third.isNotEmpty()) {
-                if (shown[i] != s.third) { b.text = s.third; shown[i] = s.third }
-                b.visibility = View.VISIBLE
-            } else b.visibility = View.GONE
-        }
-        progress.max = total
-        progress.progress = snap.count { it.second == "success" || it.second == "failure" || it.second == "skipped" }
         val fin = session.finalStatus
-        status.text = fin ?: session.currentLine()
-        actions.visibility = if (fin != null) View.VISIBLE else View.GONE
-        runBar.visibility = if (fin == null && session.running) View.VISIBLE else View.GONE
-        btnApk.visibility = if (fin != null && session.artifactId > 0) View.VISIBLE else View.GONE
         val res = session.meta.optString("result")
-        btnResume.visibility = if (fin != null && !session.running && session.meta.has("runId") && (res == "interrupted" || res == "running")) View.VISIBLE else View.GONE
-        if (atBottom && fin == null) scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+        val hasRun = session.meta.has("runId")
+        val failedIdx = snap.indexOfFirst { it.second == "failure" }
+
+        val kind = when {
+            fin == null -> "run"
+            res == "success" && session.artifactId > 0 -> "ok"
+            res == "success" -> "noapk"
+            res == "cancelled" -> "cancelled"
+            (res == "interrupted" || res == "running") && hasRun -> "pause"
+            res == "interrupted" || res == "running" -> "stopped"
+            else -> "fail"
+        }
+
+        val e: String; val t: String; val sub: String
+        when (kind) {
+            "run" -> { e = "⏳"; t = "Compilando seu app…"; sub = "Pode levar alguns minutos. Você pode fechar o app, avisaremos quando terminar." }
+            "ok" -> { e = "✅"; t = "Seu app está pronto!"; sub = "Toque em Instalar aplicativo para colocá-lo no seu celular." }
+            "noapk" -> { e = "⚠️"; t = "Compilado, mas sem arquivo"; sub = "Não encontramos o APK gerado. Tente novamente." }
+            "cancelled" -> { e = "🚫"; t = "Compilação cancelada"; sub = "" }
+            "pause" -> { e = "📡"; t = "Perdemos o acompanhamento"; sub = "Seu app pode ter continuado a compilar. Toque em Continuar acompanhando." }
+            "stopped" -> { e = "⚠️"; t = "Compilação interrompida"; sub = "O app foi fechado antes de terminar. Selecione o projeto e tente novamente." }
+            else -> {
+                e = "❌"; t = "Não foi possível compilar"
+                sub = when (failedIdx) {
+                    0 -> "Não conseguimos enviar o projeto. Confira sua internet e seu token."
+                    1 -> "Não conseguimos preparar a compilação. Tente novamente em instantes."
+                    2 -> "O projeto tem algum erro e não pôde ser compilado. Veja os detalhes técnicos para mostrar a quem desenvolveu."
+                    3 -> "O app foi compilado, mas o APK não ficou pronto."
+                    else -> "Algo deu errado. Tente novamente."
+                }
+            }
+        }
+        emoji.text = e; title.text = t; subtitle.text = sub
+        subtitle.visibility = if (sub.isEmpty()) View.GONE else View.VISIBLE
+
+        // Etapas
+        for (i in stepIcon.indices) {
+            val st = snap.getOrNull(i)?.second ?: "pending"
+            val running = st == "running"
+            stepSpin[i].visibility = if (running) View.VISIBLE else View.GONE
+            stepIcon[i].visibility = if (running) View.GONE else View.VISIBLE
+            when (st) {
+                "success" -> { stepIcon[i].text = "✓"; stepIcon[i].setTextColor(green); stepLabel[i].setTextColor(txt) }
+                "failure" -> { stepIcon[i].text = "✕"; stepIcon[i].setTextColor(red); stepLabel[i].setTextColor(txt) }
+                "skipped" -> { stepIcon[i].text = "–"; stepIcon[i].setTextColor(muted); stepLabel[i].setTextColor(muted) }
+                else -> { stepIcon[i].text = "○"; stepIcon[i].setTextColor(muted); stepLabel[i].setTextColor(if (running) txt else muted) }
+            }
+        }
+        progress.max = snap.size.coerceAtLeast(1)
+        progress.progress = snap.count { it.second == "success" || it.second == "failure" || it.second == "skipped" }
+
+        // Botões
+        btnSecondary.visibility = View.GONE
+        when (kind) {
+            "run" -> { btnPrimary.text = "Continuar em segundo plano"; primaryAction = { goBackground() } }
+            "ok" -> {
+                btnPrimary.text = if (downloading) "Preparando…" else "Instalar aplicativo"
+                btnPrimary.isEnabled = !downloading
+                primaryAction = { installApk() }
+                btnSecondary.text = "Concluir"; btnSecondary.visibility = View.VISIBLE
+            }
+            "pause" -> {
+                btnPrimary.text = "Continuar acompanhando"; primaryAction = { resume() }
+                btnSecondary.text = "Fechar"; btnSecondary.visibility = View.VISIBLE
+            }
+            else -> { btnPrimary.text = "Fechar"; primaryAction = { finish() } }
+        }
+        if (kind != "ok") btnPrimary.isEnabled = true
+        styleBtn(btnPrimary, if (kind == "ok" || kind == "run" || kind == "pause") blue else surface,
+            if (kind == "ok" || kind == "run" || kind == "pause") Color.WHITE else txt)
+        styleBtn(btnSecondary, surface, txt)
+
+        // Detalhes técnicos
+        detailsToggle.text = if (detailsOpen) "Ocultar detalhes técnicos" else "Ver detalhes técnicos"
+        detailsText.visibility = if (detailsOpen) View.VISIBLE else View.GONE
+        detailsCopy.visibility = if (detailsOpen) View.VISIBLE else View.GONE
+        if (detailsOpen) {
+            val d = session.fullText()
+            if (d != lastDetails) { detailsText.text = d; lastDetails = d }
+        }
     }
 
     private fun toast(s: String) { ui.post { Toast.makeText(this, s, Toast.LENGTH_LONG).show() } }
 
     private fun copyLogs() {
         try {
-            (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("logs", session.fullText()))
-            toast("Logs copiados")
+            (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("detalhes", session.fullText()))
+            toast("Detalhes copiados")
         } catch (e: Exception) { toast("Não foi possível copiar: ${e.message}") }
     }
 
@@ -173,7 +274,7 @@ class BuildActivity : Activity() {
     private fun continueInBackground() {
         if (Sessions.current === session && session.running) {
             startForegroundService(Intent(this, BuildService::class.java))   // garante o serviço e a notificação
-            toast("Compilando em segundo plano. Acompanhe pela notificação.")
+            toast("Compilando em segundo plano. Avisaremos quando terminar.")
             moveTaskToBack(true)
         }
     }
@@ -189,41 +290,57 @@ class BuildActivity : Activity() {
         startForegroundService(Intent(this, BuildService::class.java).setAction(BuildService.ACTION_RESUME))
     }
 
-    // ---------- Download do APK ----------
-    private fun downloadApk() {
-        btnApk.isEnabled = false
+    // ---------- Instalação do APK ----------
+    private var pendingInstall = false
+
+    override fun onResume() {
+        super.onResume()
+        // Voltou da tela de permissão: continua a instalação sozinho
+        if (pendingInstall && packageManager.canRequestPackageInstalls()) { pendingInstall = false; installApk() }
+    }
+
+    private fun installApk() {
+        if (!packageManager.canRequestPackageInstalls()) {
+            pendingInstall = true
+            toast("Permita que o GitBuilder instale apps e volte para cá.")
+            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+            return
+        }
+        downloading = true; render()
         val gh = session.gh; val full = session.fullName; val art = session.artifactId; val repoName = session.repoName
         Thread {
+            var apk: File? = null
             try {
                 val tmp = File(cacheDir, "artifact.zip")
                 val c = gh.openDownload("/repos/$full/actions/artifacts/$art/zip")
-                    ?: throw Exception("Artefato não encontrado (expirou ou o repositório foi apagado)")
+                    ?: throw Exception("O arquivo não está mais disponível")
                 c.inputStream.use { i -> tmp.outputStream().use { o -> i.copyTo(o) } }
-                var count = 0
+                val dir = File(cacheDir, "apk").apply { deleteRecursively(); mkdirs() }
                 ZipInputStream(tmp.inputStream()).use { z ->
                     var item = z.nextEntry
-                    while (item != null) {
+                    while (item != null && apk == null) {
                         if (!item.isDirectory && item.name.endsWith(".apk")) {
-                            val values = ContentValues().apply {
-                                put(MediaStore.Downloads.DISPLAY_NAME, "$repoName-${item!!.name.substringAfterLast('/')}")
-                                put(MediaStore.Downloads.MIME_TYPE, "application/vnd.android.package-archive")
-                                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                            }
-                            val out = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                                ?: throw Exception("Não foi possível criar o arquivo em Downloads")
-                            contentResolver.openOutputStream(out)!!.use { z.copyTo(it) }
-                            count++
+                            val f = File(dir, "$repoName.apk")
+                            f.outputStream().use { z.copyTo(it) }
+                            apk = f
                         }
                         item = z.nextEntry
                     }
                 }
                 tmp.delete()
-                if (count == 0) throw Exception("O artefato não contém APK")
-                toast("$count APK(s) salvo(s) na pasta Downloads")
+                val file = apk ?: throw Exception("Nenhum APK encontrado")
+                val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+                ui.post {
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW)
+                            .setDataAndType(uri, "application/vnd.android.package-archive")
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                    } catch (e: Exception) { toast("Não foi possível abrir o instalador: ${e.message}") }
+                }
             } catch (e: Exception) {
-                toast("Erro no download: ${e.message}")
+                toast("Não foi possível preparar a instalação: ${e.message}")
             } finally {
-                ui.post { btnApk.isEnabled = true }
+                ui.post { downloading = false; render() }
             }
         }.start()
     }

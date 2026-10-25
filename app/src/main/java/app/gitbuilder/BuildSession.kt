@@ -37,8 +37,8 @@ class BuildSession private constructor(private val ctx: Context, val gh: GitHub,
 
     companion object {
         val STAGES = listOf(
-            "Enviar projeto ao GitHub", "Preparar ambiente (runner, Java, Gradle)",
-            "Compilar APK", "Gerar e verificar APK"
+            "Enviando seu projeto", "Preparando a compilação",
+            "Compilando o app", "Finalizando o APK"
         )
         private const val BUILD_STEP = "Build debug APK"
         private val ANSI = Regex("\u001B\\[[0-9;]*[A-Za-z]")
